@@ -3,90 +3,81 @@ name: Build SANA Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
 
-      - name: Extract app source ZIP
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Extract Android project ZIP
+        shell: bash
         run: |
+          set -euo pipefail
+
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+
           if [ -z "$ZIP_FILE" ]; then
-            echo "No app ZIP found in repository root."
+            echo "ERROR: No ZIP file found in repository root."
             exit 1
           fi
-          mkdir -p appsrc
-          unzip -oq "$ZIP_FILE" -d appsrc
-          if [ ! -f appsrc/package.json ]; then
-            PACKAGE_FILE="$(find appsrc -mindepth 2 -maxdepth 4 -type f -name package.json -print -quit)"
-            if [ -z "$PACKAGE_FILE" ]; then
-              echo "Could not find package.json inside the ZIP."
-              find appsrc -maxdepth 4 -type f | head -80
-              exit 1
-            fi
-            APP_DIR="$(dirname "$PACKAGE_FILE")"
-            cp -a "$APP_DIR"/. appsrc/
+
+          mkdir -p extracted
+          unzip -oq "$ZIP_FILE" -d extracted
+
+          SETTINGS_FILE="$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: Android Gradle settings file not found in ZIP."
+            find extracted -maxdepth 5 -type f | head -120
+            exit 1
           fi
-          test -f appsrc/package.json
 
-      - name: Install app and Capacitor dependencies
-        working-directory: appsrc
-        run: |
-          npm install
-          npm install @capacitor/core@^7.4.3 @capacitor/android@^7.4.3
-          npm install --save-dev @capacitor/cli@^7.4.3
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
 
-      - name: Create Capacitor config
-        working-directory: appsrc
-        run: |
-          cat > capacitor.config.ts <<'EOF'
-          import type { CapacitorConfig } from '@capacitor/cli';
+          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ] && [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "ERROR: Android app module build file not found."
+            find extracted -maxdepth 5 -type f | head -120
+            exit 1
+          fi
 
-          const config: CapacitorConfig = {
-            appId: 'com.sana.liveandlove',
-            appName: 'SANA Live and Love',
-            webDir: 'dist'
-          };
+          echo "ANDROID_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          export default config;
-          EOF
-
-      - name: Build web app
-        working-directory: appsrc
-        run: npm run build
-
-      - name: Add Android platform
-        working-directory: appsrc
-        run: npx cap add android
-
-      - name: Sync Android assets
-        working-directory: appsrc
-        run: npx cap sync android
+          echo "Android project found: $PROJECT_DIR"
 
       - name: Build debug APK
-        working-directory: appsrc/android
+        shell: bash
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          set -euo pipefail
+
+          cd "$ANDROID_PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SANA-debug-APK
-          path: appsrc/android/app/build/outputs/apk/debug/app-debug.apk
+          path: extracted/**/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
