@@ -1,4 +1,4 @@
-herename: Build SANA Android APK
+name: Build SANA Android APK
 
 on:
   workflow_dispatch:
@@ -6,9 +6,6 @@ on:
     branches:
       - main
       - master
-
-permissions:
-  contents: read
 
 jobs:
   build:
@@ -18,71 +15,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Find and extract SANA source ZIP
+      - name: Find Android project ZIP
         shell: bash
         run: |
-          set -euo pipefail
-
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)
-
+          set -e
+          ZIP_FILE=$(find . -maxdepth 1 -name '*.zip' -print -quit)
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: SANA source ZIP was not found."
+            echo "ERROR: Project ZIP not found"
             exit 1
           fi
+          mkdir -p android-project
+          unzip -oq "$ZIP_FILE" -d android-project
+          find android-project -name gradlew -type f
 
-          mkdir -p app-source
-          unzip -oq "$ZIP_FILE" -d app-source
-
-          if [ ! -f app-source/package.json ]; then
-            echo "ERROR: package.json is missing from the ZIP root."
-            find app-source -maxdepth 3 -name package.json
-            exit 1
-          fi
-
-      - name: Install dependencies
-        working-directory: app-source
-        run: |
-          npm install
-          npm install --save-exact @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-
-      - name: Configure Android app
-        working-directory: app-source
+      - name: Locate Gradle project
         shell: bash
         run: |
-          cat > capacitor.config.json <<'EOF'
-          {
-            "appId": "com.sana.livelove",
-            "appName": "SANA Live and Love",
-            "webDir": "dist"
-          }
-          EOF
+          set -e
+          WRAPPER=$(find android-project -name gradlew -type f -print -quit)
+          if [ -z "$WRAPPER" ]; then
+            echo "ERROR: gradlew not found in ZIP"
+            exit 1
+          fi
+          echo "GRADLE_DIR=$(dirname "$WRAPPER")" >> "$GITHUB_ENV"
 
-      - name: Build web app
-        working-directory: app-source
-        run: npm run build
-
-      - name: Create Android project
-        working-directory: app-source
-        run: npx cap add android
-
-      - name: Sync Android project
-        working-directory: app-source
-        run: npx cap sync android
-
-      - name: Build APK
-        working-directory: app-source/android
+      - name: Build Debug APK
+        shell: bash
         run: |
+          cd "$GRADLE_DIR"
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
 
@@ -90,5 +56,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SANA-debug-APK
-          path: app-source/android/app/build/outputs/apk/debug/app-debug.apk
+          path: android-project/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
