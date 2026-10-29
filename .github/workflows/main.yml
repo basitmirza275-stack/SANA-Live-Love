@@ -34,7 +34,7 @@ jobs:
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: No ZIP file found in repository."
             exit 1
           fi
 
@@ -45,6 +45,7 @@ jobs:
 
           if [ -z "$SETTINGS_FILE" ]; then
             echo "ERROR: Gradle settings file not found."
+            find extracted -maxdepth 5 -type f | head -120
             exit 1
           fi
 
@@ -57,7 +58,9 @@ jobs:
 
           echo "ANDROID_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Update Gradle wrapper version
+          echo "Android project found: $PROJECT_DIR"
+
+      - name: Update Gradle wrapper
         shell: bash
         run: |
           set -euo pipefail
@@ -65,26 +68,46 @@ jobs:
           WRAPPER="$ANDROID_PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
 
           if [ -f "$WRAPPER" ]; then
-            sed -i 's#gradle-[0-9][^/]*-bin.zip#gradle-9.3.1-bin.zip#' "$WRAPPER"
-            sed -i 's#gradle-[0-9][^/]*-all.zip#gradle-9.3.1-all.zip#' "$WRAPPER"
+            sed -i -E 's#gradle-[0-9][0-9A-Za-z.-]*-(bin|all)\.zip#gradle-9.3.1-\1.zip#' "$WRAPPER"
             cat "$WRAPPER"
           else
-            echo "ERROR: Gradle wrapper properties not found."
-            exit 1
+            echo "Gradle wrapper properties not found; using installed Gradle."
           fi
 
       - name: Build debug APK
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$ANDROID_PROJECT_DIR"
-          chmod +x ./gradlew
-          ./gradlew --version
-          ./gradlew assembleDebug
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew --version
+            ./gradlew assembleDebug
+          else
+            gradle --version
+            gradle assembleDebug
+          fi
+
+      - name: Prepare APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$(find "$ANDROID_PROJECT_DIR" -type f -path '*/build/outputs/apk/debug/*.apk' -print -quit)"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK file was not generated."
+            exit 1
+          fi
+
+          mkdir -p apk-output
+          cp "$APK" apk-output/SANA-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SANA-debug-APK
-          path: extracted/**/app/build/outputs/apk/debug/*.apk
+          path: apk-output/SANA-debug.apk
           if-no-files-found: error
