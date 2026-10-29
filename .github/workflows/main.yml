@@ -1,4 +1,4 @@
-name: Build SANA Android APK
+herename: Build SANA Android APK
 
 on:
   workflow_dispatch:
@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - master
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -15,99 +18,77 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.3.1"
-
-      - name: Extract Android project ZIP
+      - name: Find and extract SANA source ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in repository."
+            echo "ERROR: SANA source ZIP was not found."
             exit 1
           fi
 
-          mkdir -p extracted
-          unzip -oq "$ZIP_FILE" -d extracted
+          mkdir -p app-source
+          unzip -oq "$ZIP_FILE" -d app-source
 
-          SETTINGS_FILE="$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: Gradle settings file not found."
-            find extracted -maxdepth 5 -type f | head -120
+          if [ ! -f app-source/package.json ]; then
+            echo "ERROR: package.json is missing from the ZIP root."
+            find app-source -maxdepth 3 -name package.json
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+      - name: Install dependencies
+        working-directory: app-source
+        run: |
+          npm install
+          npm install --save-exact @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
 
-          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ] && [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "ERROR: Android app module not found."
-            exit 1
-          fi
-
-          echo "ANDROID_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Android project found: $PROJECT_DIR"
-
-      - name: Update Gradle wrapper
+      - name: Configure Android app
+        working-directory: app-source
         shell: bash
         run: |
-          set -euo pipefail
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.sana.livelove",
+            "appName": "SANA Live and Love",
+            "webDir": "dist"
+          }
+          EOF
 
-          WRAPPER="$ANDROID_PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
+      - name: Build web app
+        working-directory: app-source
+        run: npm run build
 
-          if [ -f "$WRAPPER" ]; then
-            sed -i -E 's#gradle-[0-9][0-9A-Za-z.-]*-(bin|all)\.zip#gradle-9.3.1-\1.zip#' "$WRAPPER"
-            cat "$WRAPPER"
-          else
-            echo "Gradle wrapper properties not found; using installed Gradle."
-          fi
+      - name: Create Android project
+        working-directory: app-source
+        run: npx cap add android
 
-      - name: Build debug APK
-        shell: bash
+      - name: Sync Android project
+        working-directory: app-source
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: app-source/android
         run: |
-          set -euo pipefail
-
-          cd "$ANDROID_PROJECT_DIR"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew --version
-            ./gradlew assembleDebug
-          else
-            gradle --version
-            gradle assembleDebug
-          fi
-
-      - name: Prepare APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$(find "$ANDROID_PROJECT_DIR" -type f -path '*/build/outputs/apk/debug/*.apk' -print -quit)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK file was not generated."
-            exit 1
-          fi
-
-          mkdir -p apk-output
-          cp "$APK" apk-output/SANA-debug.apk
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SANA-debug-APK
-          path: apk-output/SANA-debug.apk
+          path: app-source/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
