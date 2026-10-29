@@ -1,19 +1,15 @@
-
 name: Build SANA Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -27,23 +23,63 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Install dependencies
-        run: npm install
+      - name: Extract app source ZIP
+        run: |
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No app ZIP found in repository root."
+            exit 1
+          fi
+          mkdir -p appsrc
+          unzip -oq "$ZIP_FILE" -d appsrc
+          if [ ! -f appsrc/package.json ]; then
+            PACKAGE_FILE="$(find appsrc -mindepth 2 -maxdepth 4 -type f -name package.json -print -quit)"
+            if [ -z "$PACKAGE_FILE" ]; then
+              echo "Could not find package.json inside the ZIP."
+              find appsrc -maxdepth 4 -type f | head -80
+              exit 1
+            fi
+            APP_DIR="$(dirname "$PACKAGE_FILE")"
+            cp -a "$APP_DIR"/. appsrc/
+          fi
+          test -f appsrc/package.json
 
-      - name: Install Capacitor Android
-        run: npm install @capacitor/android@^7.4.3
+      - name: Install app and Capacitor dependencies
+        working-directory: appsrc
+        run: |
+          npm install
+          npm install @capacitor/core@^7.4.3 @capacitor/android@^7.4.3
+          npm install --save-dev @capacitor/cli@^7.4.3
+
+      - name: Create Capacitor config
+        working-directory: appsrc
+        run: |
+          cat > capacitor.config.ts <<'EOF'
+          import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.sana.liveandlove',
+            appName: 'SANA Live and Love',
+            webDir: 'dist'
+          };
+
+          export default config;
+          EOF
 
       - name: Build web app
+        working-directory: appsrc
         run: npm run build
 
-      - name: Add Android project
+      - name: Add Android platform
+        working-directory: appsrc
         run: npx cap add android
 
-      - name: Sync Android project
+      - name: Sync Android assets
+        working-directory: appsrc
         run: npx cap sync android
 
-      - name: Build APK
-        working-directory: android
+      - name: Build debug APK
+        working-directory: appsrc/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
@@ -52,5 +88,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SANA-debug-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: appsrc/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
