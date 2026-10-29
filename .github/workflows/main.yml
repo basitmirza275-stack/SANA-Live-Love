@@ -1,4 +1,4 @@
-herename: Build Sana Live APK
+name: Build Sana Live APK
 
 on:
   workflow_dispatch:
