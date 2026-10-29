@@ -24,7 +24,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.13"
+          gradle-version: "9.3.1"
 
       - name: Extract Android project ZIP
         shell: bash
@@ -34,7 +34,7 @@ jobs:
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in repository root."
+            echo "ERROR: No ZIP file found."
             exit 1
           fi
 
@@ -44,36 +44,43 @@ jobs:
           SETTINGS_FILE="$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: Android Gradle settings file not found in ZIP."
-            find extracted -maxdepth 5 -type f | head -120
+            echo "ERROR: Gradle settings file not found."
             exit 1
           fi
 
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
 
           if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ] && [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "ERROR: Android app module build file not found."
-            find extracted -maxdepth 5 -type f | head -120
+            echo "ERROR: Android app module not found."
             exit 1
           fi
 
           echo "ANDROID_PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Android project found: $PROJECT_DIR"
+      - name: Update Gradle wrapper version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WRAPPER="$ANDROID_PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
+
+          if [ -f "$WRAPPER" ]; then
+            sed -i 's#gradle-[0-9][^/]*-bin.zip#gradle-9.3.1-bin.zip#' "$WRAPPER"
+            sed -i 's#gradle-[0-9][^/]*-all.zip#gradle-9.3.1-all.zip#' "$WRAPPER"
+            cat "$WRAPPER"
+          else
+            echo "ERROR: Gradle wrapper properties not found."
+            exit 1
+          fi
 
       - name: Build debug APK
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$ANDROID_PROJECT_DIR"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug
-          else
-            gradle assembleDebug
-          fi
+          chmod +x ./gradlew
+          ./gradlew --version
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
